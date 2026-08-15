@@ -11,9 +11,9 @@ func main() {
 	flag.Parse()
 
 	if *target == "" {
-		fmt.Println("Error:--target is required")
-		os.Exit(10)
+		fmt.Println("Error: --target is required")
+		os.Exit(1)
 
 	}
-	fmt.Println("Auditing target: %s\n", *target)
+	fmt.Printf("Auditing target: %s\n", *target)
 }
