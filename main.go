@@ -16,8 +16,18 @@ type AuditResult struct {
 }
 
 func auditRepo(ctx context.Context, client *github.Client, owner, name string) (AuditResult, error) {
-	repo, _, err := client.Repositories.Get(ctx, owner, name)
+	repo, resp, err := client.Repositories.Get(ctx, owner, name)
 	if err != nil {
+		if resp != nil {
+			switch resp.StatusCode {
+			case 404:
+				return AuditResult{}, fmt.Errorf("repo %s/%s does not exist or you don't have access to it", owner, name)
+			case 401:
+				return AuditResult{}, fmt.Errorf("authentication failed — check that GITHUB_TOKEN is set and valid")
+			case 403:
+				return AuditResult{}, fmt.Errorf("forbidden or rate-limited fetching %s/%s — wait a bit and try again", owner, name)
+			}
+		}
 		return AuditResult{}, fmt.Errorf("fetching repo %s/%s: %w", owner, name, err)
 	}
 	return AuditResult{
