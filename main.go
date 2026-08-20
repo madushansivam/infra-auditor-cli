@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/google/go-github/v66/github"
 )
@@ -36,29 +37,65 @@ func auditRepo(ctx context.Context, client *github.Client, owner, name string) (
 	}, nil
 }
 
+func auditAll(ctx context.Context, client *github.Client, targets []string, workers int) []AuditResult {
+	jobs := make(chan string, len(targets))
+	results := make(chan AuditResult, len(targets))
+	var wg sync.WaitGroup
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for t := range jobs {
+				owner, name, found := strings.Cut(t, "/")
+				if !found {
+					fmt.Printf("skipping %q: not in owner/repo format\n", t)
+					continue
+				}
+				res, err := auditRepo(ctx, client, owner, name)
+				if err != nil {
+					fmt.Printf("skipping %s: %v\n", t, err)
+					continue
+				}
+				results <- res
+			}
+		}()
+	}
+
+	for _, t := range targets {
+		jobs <- t
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var all []AuditResult
+	for r := range results {
+		all = append(all, r)
+	}
+	return all
+}
+
 func main() {
-	target := flag.String("target", "", "owner/repo to audit")
+	target := flag.String("target", "", "comma-separated owner/repo list to audit")
 	flag.Parse()
 
 	if *target == "" {
-		fmt.Println("Error: --target is required (format: owner/repo)")
+		fmt.Println("Error: --target is required (format: owner/repo,owner2/repo2,...)")
 		os.Exit(1)
 	}
 
-	owner, name, found := strings.Cut(*target, "/")
-	if !found {
-		fmt.Println("Error: --target must be in the format owner/repo")
-		os.Exit(1)
-	}
+	targets := strings.Split(*target, ",")
 
 	client := github.NewClient(nil).WithAuthToken(os.Getenv("GITHUB_TOKEN"))
 	ctx := context.Background()
 
-	result, err := auditRepo(ctx, client, owner, name)
-	if err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
+	results := auditAll(ctx, client, targets, 5)
 
-	fmt.Printf("Repo: %s\nOpen issues: %d\n", result.Name, result.OpenIssues)
+	for _, r := range results {
+		fmt.Printf("Repo: %s | Open issues: %d\n", r.Name, r.OpenIssues)
+	}
 }
